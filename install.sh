@@ -484,6 +484,7 @@ finish_test() { kill "$test_pid" 2>/dev/null || true; wait "$test_pid" 2>/dev/nu
 trap 'finish_test; rm -rf -- "$work"' EXIT
 test_ok=0
 for attempt in 1 2 3 4 5; do
+    printf 'Проверка туннеля: попытка %s/5…\n' "$attempt"
     if actual=$(curl -4 -fsS --connect-timeout 5 --max-time 15 --socks5-hostname 127.0.0.1:10888 https://api.ipify.org); then
         [[ $actual == "$ip" ]] || fail 'Выходной IP не совпал с адресом сервера.'
         test_ok=1
