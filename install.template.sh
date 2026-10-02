@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# Generated self-contained installer. Sources: install.template.sh + manager.py.
+set -Eeuo pipefail
+umask 077
+export DEBIAN_FRONTEND=noninteractive
+fail() { printf '\nОшибка: %s\n' "$*" >&2; exit 1; }
+trap 'printf "\nУстановка остановлена на строке %s. Исправьте причину и запустите повторно.\n" "$LINENO" >&2' ERR
+
+if [[ ${1:-} == --help ]]; then
+    printf '%s\n' 'SA VPN: Ubuntu 22.04/24.04, root, публичный IPv4.' \
+      'Опционально: SA_VPN_IP=IPv4, SA_VPN_EMAIL=email (уведомления ACME).' \
+      'Требуются свободные TCP 80, 443, 2096. Уже установленный VPN не заменяется.'
+    exit 0
+fi
+[[ $# == 0 ]] || fail 'Неизвестный аргумент. Используйте --help.'
+[[ $EUID == 0 ]] || fail 'Войдите как root или используйте sudo bash.'
+[[ -d /run/systemd/system ]] || fail 'Нужен VPS с systemd, не контейнер.'
+source /etc/os-release
+[[ $ID == ubuntu && ($VERSION_ID == 22.04 || $VERSION_ID == 24.04) ]] || fail 'Поддерживается Ubuntu 22.04 или 24.04.'
+command -v flock >/dev/null || fail 'Не найден flock (пакет util-linux).'
+exec 9>/run/sa-vpn-install.lock
+flock -n 9 || fail 'Другой установщик уже работает.'
+
+# A successful repeated run only checks and displays existing links.
+if [[ -f /etc/sa-vpn/installed ]]; then
+    /usr/local/bin/sa-vpn doctor
+    /usr/local/bin/sa-vpn links
+    exit 0
+fi
+[[ ! -e /etc/x-ui/x-ui.db && ! -e /usr/local/x-ui && ! -e /etc/xray/config.json ]] || fail 'Обнаружен другой VPN. Используйте новый VPS; существующие настройки не затронуты.'
+command -v ss >/dev/null || fail 'Не найден ss (пакет iproute2).'
+if [[ ! -f /etc/sa-vpn/state.json ]]; then
+    for port in 80 443 2096 10000; do
+        [[ -z $(ss -H -ltn "sport = :$port") ]] || fail "Порт $port уже занят. Используйте чистый VPS."
+    done
+    [[ ! -d /etc/nginx || -z $(find /etc/nginx -type f -name '*.conf' -print -quit) ]] || fail 'Обнаружена конфигурация nginx. Используйте чистый VPS.'
+fi
+case $(uname -m) in
+    x86_64) asset=Xray-linux-64.zip; sha=b3e5902d06d6282fe53cfa2fc426058b9aeaa429b2c812e20887cd47f26d08bf ;;
+    aarch64) asset=Xray-linux-arm64-v8a.zip; sha=13a251379bea366c2cf10363ad71e75734193d401f26f518bf0c25e5c8f8c931 ;;
+    *) fail 'Поддерживается amd64 или arm64.' ;;
+esac
+printf '\nSA VPN: установка зависимостей…\n'
+apt-get update -qq
+apt-get install -y --no-install-recommends ca-certificates curl unzip nginx python3 python3-venv openssl qrencode
+
+if [[ -f /etc/sa-vpn/state.json ]]; then
+    ip=$(python3 -c 'import json; print(json.load(open("/etc/sa-vpn/state.json"))["ip"])')
+else
+    ip=${SA_VPN_IP:-$(curl -4 -fsS --retry 3 --connect-timeout 10 --max-time 30 https://api.ipify.org)}
+fi
+python3 - "$ip" <<'PY'
+import ipaddress, sys
+ip = ipaddress.ip_address(sys.argv[1])
+if ip.version != 4 or not ip.is_global:
+    sys.exit('Нужен публичный IPv4. Задайте SA_VPN_IP.')
+PY
+
+work=$(mktemp -d /tmp/sa-vpn-install.XXXXXXXX)
+trap 'rm -f "$work/xray.zip"; rm -rf -- "$work"' EXIT
+curl -fSL --retry 3 --connect-timeout 15 --max-time 180 \
+    "https://github.com/XTLS/Xray-core/releases/download/v26.6.27/$asset" -o "$work/xray.zip"
+printf '%s  %s\n' "$sha" "$work/xray.zip" | sha256sum -c -
+unzip -q "$work/xray.zip" -d "$work/xray"
+install -d -m 755 /usr/local/lib/sa-vpn /var/lib/sa-vpn/acme /var/lib/sa-vpn/sub
+install -d -m 750 /etc/sa-vpn
+getent group sa-vpn >/dev/null || groupadd --system sa-vpn
+id sa-vpn >/dev/null 2>&1 || useradd --system --gid sa-vpn --home-dir /nonexistent --shell /usr/sbin/nologin sa-vpn
+chown root:sa-vpn /etc/sa-vpn
+install -m 755 "$work/xray/xray" /usr/local/lib/sa-vpn/xray
+install -m 644 "$work/xray/geoip.dat" /usr/local/lib/sa-vpn/geoip.dat
+install -m 644 "$work/xray/geosite.dat" /usr/local/lib/sa-vpn/geosite.dat
+
+# Certbot webroot IP support needs >=5.4; distro packages may be older.
+python3 -m venv /opt/sa-vpn-certbot
+/opt/sa-vpn-certbot/bin/pip install --disable-pip-version-check 'certbot==5.4.0'
+
+cat > /usr/local/bin/sa-vpn <<'SA_VPN_PYTHON'
+@@MANAGER@@
+SA_VPN_PYTHON
+chmod 755 /usr/local/bin/sa-vpn
+/usr/local/bin/sa-vpn init "$ip"
+
+# Only the distribution's default site is removed; custom sites were rejected above.
+if [[ -L /etc/nginx/sites-enabled/default && $(readlink /etc/nginx/sites-enabled/default) == /etc/nginx/sites-available/default ]]; then
+    unlink /etc/nginx/sites-enabled/default
+fi
+/usr/local/bin/sa-vpn render --http-only
+nginx -t
+systemctl enable --now nginx
+systemctl reload nginx
+
+# Preserve SSH and all existing firewall rules. Do not enable/reset a firewall.
+if command -v ufw >/dev/null && ufw status | head -n1 | grep -q 'Status: active'; then
+    ufw allow 80/tcp
+    ufw allow 443/tcp
+    ufw allow 2096/tcp
+fi
+printf '\nВыпускаю TLS-сертификат для %s (порт 80 должен быть доступен извне)…\n' "$ip"
+email_flags=(--register-unsafely-without-email)
+[[ -z ${SA_VPN_EMAIL:-} ]] || email_flags=(--email "$SA_VPN_EMAIL")
+/opt/sa-vpn-certbot/bin/certbot certonly --non-interactive --agree-tos \
+    "${email_flags[@]}" --webroot --webroot-path /var/lib/sa-vpn/acme \
+    --preferred-profile shortlived --ip-address "$ip" --cert-name sa-vpn --keep-until-expiring
+
+cat > /etc/systemd/system/sa-vpn-xray.service <<'UNIT'
+[Unit]
+Description=SA VPN Xray
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=sa-vpn
+Group=sa-vpn
+Environment=XRAY_LOCATION_ASSET=/usr/local/lib/sa-vpn
+ExecStart=/usr/local/lib/sa-vpn/xray run -config /etc/sa-vpn/xray.json
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+LimitNOFILE=65536
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+install -d -m 755 /etc/letsencrypt/renewal-hooks/deploy
+cat > /etc/letsencrypt/renewal-hooks/deploy/sa-vpn-nginx <<'HOOK'
+#!/bin/sh
+set -eu
+nginx -t
+systemctl reload nginx
+HOOK
+chmod 755 /etc/letsencrypt/renewal-hooks/deploy/sa-vpn-nginx
+cat > /etc/systemd/system/sa-vpn-renew.service <<'UNIT'
+[Unit]
+Description=Renew SA VPN IP certificate
+After=network-online.target nginx.service
+[Service]
+Type=oneshot
+ExecStart=/opt/sa-vpn-certbot/bin/certbot renew --quiet --cert-name sa-vpn
+UNIT
+cat > /etc/systemd/system/sa-vpn-renew.timer <<'UNIT'
+[Unit]
+Description=Check SA VPN certificate every six hours
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:00:00
+RandomizedDelaySec=15m
+Persistent=true
+[Install]
+WantedBy=timers.target
+UNIT
+cat > /etc/systemd/system/sa-vpn-backup.service <<'UNIT'
+[Unit]
+Description=Backup SA VPN user keys
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/sa-vpn backup
+UNIT
+cat > /etc/systemd/system/sa-vpn-backup.timer <<'UNIT'
+[Unit]
+Description=Daily SA VPN backup
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=15m
+Persistent=true
+[Install]
+WantedBy=timers.target
+UNIT
+
+/usr/local/bin/sa-vpn render
+/usr/local/lib/sa-vpn/xray run -test -config /etc/sa-vpn/xray.json
+nginx -t
+systemctl daemon-reload
+systemctl enable --now sa-vpn-xray sa-vpn-renew.timer sa-vpn-backup.timer
+systemctl reload nginx
+/usr/local/bin/sa-vpn doctor
+
+# Full loopback TLS + WS + VLESS + outbound smoke test, not just a listening port.
+python3 - "$work/client.json" "$ip" <<'PY'
+import json, sys
+state = json.load(open('/etc/sa-vpn/state.json'))
+config = {
+ 'log': {'loglevel': 'warning'},
+ 'inbounds': [{'listen': '127.0.0.1', 'port': 10888, 'protocol': 'socks', 'settings': {'udp': False}}],
+ 'outbounds': [{'protocol': 'vless', 'settings': {'vnext': [{'address': '127.0.0.1', 'port': 443,
+ 'users': [{'id': state['clients'][0]['id'], 'encryption': 'none'}]}]},
+ 'streamSettings': {'network': 'ws', 'security': 'tls', 'tlsSettings': {'serverName': state['ip']},
+ 'wsSettings': {'path': state['path'], 'headers': {'Host': state['ip']}}}}]}
+with open(sys.argv[1], 'w') as f: json.dump(config, f)
+PY
+[[ -z $(ss -H -ltn 'sport = :10888') ]] || fail 'Тестовый порт 10888 занят.'
+/usr/local/lib/sa-vpn/xray run -config "$work/client.json" >"$work/client.log" 2>&1 &
+test_pid=$!
+finish_test() { kill "$test_pid" 2>/dev/null || true; wait "$test_pid" 2>/dev/null || true; }
+trap 'finish_test; rm -rf -- "$work"' EXIT
+test_ok=0
+for attempt in 1 2 3 4 5; do
+    if actual=$(curl -4 -fsS --connect-timeout 5 --max-time 15 --socks5-hostname 127.0.0.1:10888 https://api.ipify.org); then
+        [[ $actual == "$ip" ]] || fail 'Выходной IP не совпал с адресом сервера.'
+        test_ok=1
+        break
+    fi
+    sleep 1
+done
+finish_test
+trap 'rm -rf -- "$work"' EXIT
+[[ $test_ok == 1 ]] || fail 'Проверка через туннель не прошла. Проверьте journalctl -u sa-vpn-xray.'
+date -u +%FT%TZ > /etc/sa-vpn/installed
+/usr/local/bin/sa-vpn backup
+printf '\nVPN установлен. Добавьте URL подписки в Happ.\n'
+/usr/local/bin/sa-vpn links
+python3 - <<'PY'
+import json, subprocess
+state = json.load(open('/etc/sa-vpn/state.json'))
+for c in state['clients']:
+    print('\nQR подписки: ' + c['name'], flush=True)
+    subprocess.run(['qrencode', '-t', 'ANSIUTF8', f"https://{state['ip']}:2096/sub/{c['token']}"], check=True)
+PY
+printf '\nПроверено локально через TLS/VLESS. Доступ из вашей сети проверьте в Happ.\n'

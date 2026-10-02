@@ -1,0 +1,28 @@
+name: Validate installer
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  check:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Static and state tests
+        run: |
+          python3 build.py --check
+          bash -n install.sh
+          bash install.sh --help
+          python3 -m unittest discover -s tests -v
+          shellcheck -e SC1091,SC2016 install.sh
+      - name: Install test dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y nginx unzip
+      - name: Download and verify pinned Xray
+        run: |
+          curl -fSL --retry 3 https://github.com/XTLS/Xray-core/releases/download/v26.6.27/Xray-linux-64.zip -o /tmp/sa-vpn-xray.zip
+          echo 'b3e5902d06d6282fe53cfa2fc426058b9aeaa429b2c812e20887cd47f26d08bf  /tmp/sa-vpn-xray.zip' | sha256sum -c -
+          unzip -q /tmp/sa-vpn-xray.zip -d /tmp/sa-vpn-test-xray
+      - name: Real protocol integration test
+        run: python3 tests/integration.py /tmp/sa-vpn-test-xray/xray
