@@ -51,6 +51,7 @@ with tempfile.TemporaryDirectory(prefix='sa-vpn-test-') as tmp:
     os.chmod(subdir / c['token'], 0o644)
     server_state = dict(state, ip='8.8.4.4')
     server = m.config(server_state)
+    server['log'] = {'loglevel': 'debug'}
     server['routing'] = {'rules': []}  # Local fixture only.
     (root / 'server.json').write_text(json.dumps(server))
     nginx = m.nginx(state).replace('listen 80;', 'listen 127.0.0.1:9080;') \
@@ -58,14 +59,15 @@ with tempfile.TemporaryDirectory(prefix='sa-vpn-test-') as tmp:
         .replace('listen 2096 ssl;', 'listen 127.0.0.1:9444 ssl;') \
         .replace('/etc/letsencrypt/live/sa-vpn', str(root)) \
         .replace('/var/lib/sa-vpn', str(root)) \
-        .replace('/var/log/nginx/sa-vpn-error.log', str(root / 'nginx-error.log'))
+        .replace('/var/log/nginx/sa-vpn-error.log crit', 'stderr info')
     temps = '\n'.join(f'{kind}_temp_path {root}/{kind};' for kind in
                       ('client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'))
     nginx = f'pid {root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{\naccess_log off;\n{temps}\n{nginx}\n}}\n'
     (root / 'nginx.conf').write_text(nginx)
     call('nginx', '-t', '-c', str(root / 'nginx.conf'), '-p', str(root))
     call(xray, 'run', '-test', '-config', str(root / 'server.json'))
-    client = {'inbounds': [{'listen': '127.0.0.1', 'port': 10888, 'protocol': 'socks'}],
+    client = {'log': {'loglevel': 'debug'},
+              'inbounds': [{'listen': '127.0.0.1', 'port': 10888, 'protocol': 'socks', 'settings': {'auth': 'noauth', 'udp': False}}],
               'outbounds': [{'protocol': 'vless', 'settings': {'vnext': [{
                   'address': '127.0.0.1', 'port': 9443,
                   'users': [{'id': c['id'], 'encryption': 'none'}]}]},
@@ -81,14 +83,14 @@ with tempfile.TemporaryDirectory(prefix='sa-vpn-test-') as tmp:
         procs.append(subprocess.Popen(['nginx', '-c', str(root / 'nginx.conf'), '-p', str(root), '-g', 'daemon off;']))
         procs.append(subprocess.Popen([xray, 'run', '-config', str(root / 'server.json')]))
         procs.append(subprocess.Popen([xray, 'run', '-config', str(root / 'client.json')]))
-        for attempt in range(30):
+        for attempt in range(10):
             try:
-                result = call('curl', '-fsS', '--max-time', '3', '--noproxy', '',
+                result = call('curl', '-fsS', '--max-time', '2', '--noproxy', '',
                               '--socks5-hostname', '127.0.0.1:10888', 'http://127.0.0.1:19090/')
                 assert result == b'SA-VPN-INTEGRATION-OK', result
                 break
             except subprocess.CalledProcessError:
-                if attempt == 29: raise
+                if attempt == 9: raise
                 time.sleep(0.2)
         body = call('curl', '-fsS', '--cacert', str(cert), f"https://127.0.0.1:9444/sub/{c['token']}")
         assert base64.b64decode(body).decode() == m.uri(state, c)
