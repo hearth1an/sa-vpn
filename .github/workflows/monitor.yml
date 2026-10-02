@@ -1,0 +1,25 @@
+name: VPN availability monitor
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - monitoring/**
+      - .github/workflows/monitor.yml
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: vpn-availability-monitor
+  cancel-in-progress: false
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Compare Russian and foreign TCP probes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 monitoring/check.py

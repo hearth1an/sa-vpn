@@ -16,7 +16,22 @@ spec.loader.exec_module(m)
 
 class StateTests(unittest.TestCase):
     def setUp(self):
-        self.state = m.initial_state('8.8.4.4')
+        self.state = m.initial_state('8.8.4.4', 3)
+
+    def test_numbered_provisioning_and_retry_preserve_credentials(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(m, 'ROOT', Path(temp)):
+            state = m.initial_state('8.8.4.4')
+            for count in range(1, 6):
+                result = m.provision(state, count)
+                self.assertEqual([c['name'] for c in result['clients']], [str(n) for n in range(1, count + 1)])
+                self.assertEqual(result['clients'][0], state['clients'][0])
+                self.assertEqual(m.provision(result, count), result)
+                self.assertEqual(len({c['id'] for c in result['clients']}), count)
+                self.assertEqual(len({c['token'] for c in result['clients']}), count)
+            for invalid in (0, 6, -1, True, '3'):
+                with self.assertRaises(ValueError): m.provision(state, invalid)
+            (Path(temp) / 'installed').touch()
+            with self.assertRaises(ValueError): m.provision(state, 2)
 
     def test_independent_credentials_and_valid_subscription(self):
         m.validate(self.state)

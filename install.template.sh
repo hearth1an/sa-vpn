@@ -28,6 +28,9 @@ if [[ -f /etc/sa-vpn/installed ]]; then
     /usr/local/bin/sa-vpn links
     exit 0
 fi
+if ! { : </dev/tty; } 2>/dev/null; then
+    fail 'Нужен интерактивный SSH-терминал для выбора количества ключей.'
+fi
 [[ ! -e /etc/x-ui/x-ui.db && ! -e /usr/local/x-ui && ! -e /etc/xray/config.json ]] || fail 'Обнаружен другой VPN. Используйте новый VPS; существующие настройки не затронуты.'
 command -v ss >/dev/null || fail 'Не найден ss (пакет iproute2).'
 if [[ ! -f /etc/sa-vpn/state.json ]]; then
@@ -208,6 +211,17 @@ done
 finish_test
 trap 'rm -rf -- "$work"' EXIT
 [[ $test_ok == 1 ]] || fail 'Проверка через туннель не прошла. Проверьте journalctl -u sa-vpn-xray.'
+printf '\nУстановка и проверка туннеля завершены.\n'
+while true; do
+    printf 'Сколько ключей выдать? Введите число от 1 до 5: ' >/dev/tty
+    IFS= read -r key_count </dev/tty || fail 'Не удалось прочитать количество ключей.'
+    if [[ $key_count =~ ^[1-5]$ ]]; then
+        break
+    fi
+    printf 'Введите целое число от 1 до 5.\n' >/dev/tty
+done
+/usr/local/bin/sa-vpn provision "$key_count"
+/usr/local/bin/sa-vpn doctor
 date -u +%FT%TZ > /etc/sa-vpn/installed
 /usr/local/bin/sa-vpn backup
 printf '\nVPN установлен. Добавьте URL подписки в Happ.\n'

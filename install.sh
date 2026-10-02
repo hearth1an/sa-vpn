@@ -28,6 +28,9 @@ if [[ -f /etc/sa-vpn/installed ]]; then
     /usr/local/bin/sa-vpn links
     exit 0
 fi
+if ! { : </dev/tty; } 2>/dev/null; then
+    fail 'Нужен интерактивный SSH-терминал для выбора количества ключей.'
+fi
 [[ ! -e /etc/x-ui/x-ui.db && ! -e /usr/local/x-ui && ! -e /etc/xray/config.json ]] || fail 'Обнаружен другой VPN. Используйте новый VPS; существующие настройки не затронуты.'
 command -v ss >/dev/null || fail 'Не найден ss (пакет iproute2).'
 if [[ ! -f /etc/sa-vpn/state.json ]]; then
@@ -123,10 +126,26 @@ def client(name):
     return {'name': name, 'id': str(uuid.uuid4()), 'token': secrets.token_hex(24)}
 
 
-def initial_state(ip):
+def initial_state(ip, count=1):
     validate_ip(ip)
+    if type(count) is not int or not 1 <= count <= 5:
+        raise ValueError('Количество ключей: целое число от 1 до 5')
     return {'schema': 1, 'ip': ip, 'path': '/' + secrets.token_hex(16),
-            'clients': [client(n) for n in ('sergey', 'sonia', 'tv')]}
+            'clients': [client(str(n)) for n in range(1, count + 1)]}
+
+
+def provision(state, count):
+    if type(count) is not int or not 1 <= count <= 5:
+        raise ValueError('Количество ключей: целое число от 1 до 5')
+    if (ROOT / 'installed').exists():
+        raise ValueError('Установка уже завершена; используйте add/revoke')
+    expected = [str(n) for n in range(1, len(state['clients']) + 1)]
+    if [c['name'] for c in state['clients']] != expected:
+        raise ValueError('Существующие именные профили нельзя заменить автоматически')
+    changed = copy.deepcopy(state)
+    changed['clients'] = changed['clients'][:count]
+    changed['clients'].extend(client(str(n)) for n in range(len(changed['clients']) + 1, count + 1))
+    return changed
 
 
 def validate_ip(ip):
@@ -314,6 +333,7 @@ def main():
     p = sub.add_parser('revoke'); p.add_argument('name')
     p = sub.add_parser('restore'); p.add_argument('archive')
     p = sub.add_parser('init'); p.add_argument('ip')
+    p = sub.add_parser('provision'); p.add_argument('count', type=int)
     p = sub.add_parser('render'); p.add_argument('--http-only', action='store_true')
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -331,6 +351,8 @@ def main():
         backup()
     elif args.command == 'restore':
         restore(args.archive)
+    elif args.command == 'provision':
+        apply(provision(state, args.count))
     elif args.command == 'render':
         render(state, tls=not args.http_only)
     elif args.command == 'doctor':
@@ -495,6 +517,17 @@ done
 finish_test
 trap 'rm -rf -- "$work"' EXIT
 [[ $test_ok == 1 ]] || fail 'Проверка через туннель не прошла. Проверьте journalctl -u sa-vpn-xray.'
+printf '\nУстановка и проверка туннеля завершены.\n'
+while true; do
+    printf 'Сколько ключей выдать? Введите число от 1 до 5: ' >/dev/tty
+    IFS= read -r key_count </dev/tty || fail 'Не удалось прочитать количество ключей.'
+    if [[ $key_count =~ ^[1-5]$ ]]; then
+        break
+    fi
+    printf 'Введите целое число от 1 до 5.\n' >/dev/tty
+done
+/usr/local/bin/sa-vpn provision "$key_count"
+/usr/local/bin/sa-vpn doctor
 date -u +%FT%TZ > /etc/sa-vpn/installed
 /usr/local/bin/sa-vpn backup
 printf '\nVPN установлен. Добавьте URL подписки в Happ.\n'

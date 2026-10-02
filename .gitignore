@@ -6,3 +6,4 @@ state.json
 *.tar.gz
 *.zip
 .env
+monitor-result.json
