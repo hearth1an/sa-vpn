@@ -53,6 +53,10 @@ with tempfile.TemporaryDirectory(prefix='sa-vpn-test-') as tmp:
     server = m.config(server_state)
     server['log'] = {'loglevel': 'debug'}
     server['routing'] = {'rules': []}  # Local fixture only.
+    # Xray also blocks private destinations inside freedom by default.
+    # Permit exactly this fixture in the test; production retains that protection.
+    server['outbounds'][0]['settings'] = {'finalRules': [
+        {'action': 'allow', 'ip': ['127.0.0.1/32'], 'port': '19090'}]}
     (root / 'server.json').write_text(json.dumps(server))
     nginx = m.nginx(state).replace('listen 80;', 'listen 127.0.0.1:9080;') \
         .replace('listen 443 ssl;', 'listen 127.0.0.1:9443 ssl;') \
