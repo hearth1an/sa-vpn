@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 
 API = 'https://check-host.net'
@@ -21,8 +22,16 @@ def request(url, data=None, method=None, token=None):
     if data is not None:
         headers['Content-Type'] = 'application/json'
         data = json.dumps(data).encode()
-    with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers, method=method), timeout=25) as r:
-        return json.load(r)
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers, method=method), timeout=25) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as error:
+            if not url.startswith(API + '/') or error.code != 429 or attempt == 2:
+                raise
+            # Hosted runners share public addresses; respect API throttling.
+            delay = error.headers.get('Retry-After', '')
+            time.sleep(min(60, max(15, int(delay))) if delay.isdigit() else 15 * (attempt + 1))
 
 
 def choose_nodes(nodes):
