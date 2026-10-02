@@ -28,7 +28,11 @@ class Origin(http.server.BaseHTTPRequestHandler):
 
 
 def call(*args):
-    return subprocess.check_output(args, stderr=subprocess.STDOUT)
+    try:
+        return subprocess.check_output(args, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as error:
+        print(error.output.decode(errors='replace'), file=sys.stderr)
+        raise
 
 
 with tempfile.TemporaryDirectory(prefix='sa-vpn-test-') as tmp:
@@ -55,7 +59,9 @@ with tempfile.TemporaryDirectory(prefix='sa-vpn-test-') as tmp:
         .replace('/etc/letsencrypt/live/sa-vpn', str(root)) \
         .replace('/var/lib/sa-vpn', str(root)) \
         .replace('/var/log/nginx/sa-vpn-error.log', str(root / 'nginx-error.log'))
-    nginx = f'pid {root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{\n{nginx}\n}}\n'
+    temps = '\n'.join(f'{kind}_temp_path {root}/{kind};' for kind in
+                      ('client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'))
+    nginx = f'pid {root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{\naccess_log off;\n{temps}\n{nginx}\n}}\n'
     (root / 'nginx.conf').write_text(nginx)
     call('nginx', '-t', '-c', str(root / 'nginx.conf'), '-p', str(root))
     call(xray, 'run', '-test', '-config', str(root / 'server.json'))
