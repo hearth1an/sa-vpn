@@ -137,7 +137,7 @@ server {{
     server_name _;
 {common}
     root /var/lib/sa-vpn;
-    location ~ ^/sub/[a-f0-9]{{48}}$ {{
+    location ~ "^/sub/[a-f0-9]{{48}}$" {{
         default_type text/plain;
         add_header Cache-Control "no-store" always;
         try_files $uri =404;
