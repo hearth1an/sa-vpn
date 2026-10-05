@@ -12,6 +12,11 @@ from urllib.parse import urlparse, parse_qs
 spec = importlib.util.spec_from_file_location('manager', Path(__file__).resolve().parents[1] / 'manager.py')
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
+tool_spec = importlib.util.spec_from_file_location(
+    'apply_happ_routing_3xui',
+    Path(__file__).resolve().parents[1] / 'tools' / 'apply_happ_routing_3xui.py')
+tool = importlib.util.module_from_spec(tool_spec)
+tool_spec.loader.exec_module(tool)
 
 
 class StateTests(unittest.TestCase):
@@ -112,6 +117,8 @@ class StateTests(unittest.TestCase):
         nginx = m.nginx(self.state)
         self.assertIn(f'add_header routing "{link}" always;', nginx)
         self.assertIn('add_header routing-enable "true" always;', nginx)
+        self.assertEqual(tool.PROFILE, m.HAPP_ROUTING_PROFILE)
+        self.assertEqual(tool.routing_link(), link)
 
 
 if __name__ == '__main__': unittest.main()
