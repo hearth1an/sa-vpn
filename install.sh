@@ -103,6 +103,63 @@ ROOT = Path('/etc/sa-vpn')
 WEB = Path('/var/lib/sa-vpn/sub')
 XRAY = Path('/etc/sa-vpn/xray.json')
 
+HAPP_ROUTING_PROFILE = {
+    'Name': 'SA VPN - RU direct',
+    'GlobalProxy': 'true',
+    'RemoteDNSType': 'DoH',
+    'RemoteDNSDomain': 'https://cloudflare-dns.com/dns-query',
+    'RemoteDNSIP': '1.1.1.1',
+    'DomesticDNSType': 'DoH',
+    'DomesticDNSDomain': 'https://common.dot.dns.yandex.net/dns-query',
+    'DomesticDNSIP': '77.88.8.8',
+    'Geoipurl': 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat',
+    'Geositeurl': 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat',
+    'DnsHosts': {
+        'cloudflare-dns.com': '1.1.1.1',
+        'common.dot.dns.yandex.net': '77.88.8.8',
+    },
+    'DirectSites': [
+        'domain:kontur.ru',
+        'domain:e-kontur.ru',
+        'domain:testkontur.ru',
+        'domain:skbkontur.ru',
+        'domain:ozon.com',
+        'domain:ozonusercontent.com',
+        'domain:ozoncdn.com',
+        'domain:wildberries.com',
+        'domain:wbstatic.net',
+        'domain:anydesk.com',
+        'regexp:\\.ru$',
+        'regexp:\\.su$',
+        'regexp:\\.xn--p1ai$',
+    ],
+    'DirectIp': ['geoip:ru', 'geoip:private'],
+    'ProxySites': [
+        'domain:youtube.com',
+        'domain:youtu.be',
+        'domain:googlevideo.com',
+        'domain:ytimg.com',
+        'domain:youtubei.googleapis.com',
+        'domain:instagram.com',
+        'domain:cdninstagram.com',
+        'domain:facebook.com',
+        'domain:fbcdn.net',
+        'domain:whatsapp.com',
+        'domain:whatsapp.net',
+    ],
+    'ProxyIp': [],
+    'BlockSites': [],
+    'BlockIp': [],
+    'DomainStrategy': 'IPIfNonMatch',
+    'FakeDNS': 'false',
+    'RouteOrder': ['block', 'direct', 'proxy'],
+}
+
+
+def happ_routing_link():
+    payload = json.dumps(HAPP_ROUTING_PROFILE, separators=(',', ':'))
+    return 'happ://routing/onadd/' + base64.b64encode(payload.encode()).decode()
+
 
 def atomic(path, text, mode=0o600):
     path = Path(path)
@@ -214,6 +271,7 @@ def nginx(state, tls=True):
     access_log off;
     error_log /var/log/nginx/sa-vpn-error.log crit;
 '''
+    routing = happ_routing_link()
     return http + f'''server {{
     listen 443 ssl;
     server_name _;
@@ -238,6 +296,8 @@ server {{
     location ~ "^/sub/[a-f0-9]{{48}}$" {{
         default_type text/plain;
         add_header Cache-Control "no-store" always;
+        add_header routing "{routing}" always;
+        add_header routing-enable "true" always;
         try_files $uri =404;
     }}
     location / {{ return 404; }}

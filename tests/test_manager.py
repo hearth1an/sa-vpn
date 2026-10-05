@@ -98,5 +98,20 @@ class StateTests(unittest.TestCase):
         self.assertNotIn('autoindex on', text)
         self.assertNotIn('listen 443', m.nginx(self.state, tls=False))
 
+    def test_happ_routing_is_embedded_in_subscription_response(self):
+        link = m.happ_routing_link()
+        self.assertTrue(link.startswith('happ://routing/onadd/'))
+        payload = link.removeprefix('happ://routing/onadd/')
+        profile = json.loads(base64.b64decode(payload))
+        self.assertEqual(profile, m.HAPP_ROUTING_PROFILE)
+        self.assertIn('domain:kontur.ru', profile['DirectSites'])
+        self.assertIn('domain:e-kontur.ru', profile['DirectSites'])
+        self.assertIn('domain:anydesk.com', profile['DirectSites'])
+        self.assertIn('regexp:\\.ru$', profile['DirectSites'])
+        self.assertIn('domain:youtube.com', profile['ProxySites'])
+        nginx = m.nginx(self.state)
+        self.assertIn(f'add_header routing "{link}" always;', nginx)
+        self.assertIn('add_header routing-enable "true" always;', nginx)
+
 
 if __name__ == '__main__': unittest.main()
