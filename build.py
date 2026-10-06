@@ -25,6 +25,8 @@ outputs = {
     root / 'install.sh': template.replace('@@MANAGER@@', manager),
     root / 'tools/apply_happ_routing_3xui.py': standalone(
         (root / 'tools/apply_happ_routing_3xui.template.py').read_text()),
+    root / 'tools/prepare_youtube_egress.py': standalone(
+        (root / 'tools/prepare_youtube_egress.template.py').read_text()),
 }
 if sys.argv[1:] == ['--manager']:
     print(manager)
