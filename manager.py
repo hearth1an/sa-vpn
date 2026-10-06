@@ -21,62 +21,7 @@ ROOT = Path('/etc/sa-vpn')
 WEB = Path('/var/lib/sa-vpn/sub')
 XRAY = Path('/etc/sa-vpn/xray.json')
 
-HAPP_ROUTING_PROFILE = {
-    'Name': 'SA VPN - RU direct',
-    'GlobalProxy': 'true',
-    'RemoteDNSType': 'DoH',
-    'RemoteDNSDomain': 'https://cloudflare-dns.com/dns-query',
-    'RemoteDNSIP': '1.1.1.1',
-    'DomesticDNSType': 'DoH',
-    'DomesticDNSDomain': 'https://common.dot.dns.yandex.net/dns-query',
-    'DomesticDNSIP': '77.88.8.8',
-    'Geoipurl': 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat',
-    'Geositeurl': 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat',
-    'DnsHosts': {
-        'cloudflare-dns.com': '1.1.1.1',
-        'common.dot.dns.yandex.net': '77.88.8.8',
-    },
-    'DirectSites': [
-        'domain:kontur.ru',
-        'domain:e-kontur.ru',
-        'domain:testkontur.ru',
-        'domain:skbkontur.ru',
-        'domain:ozon.com',
-        'domain:ozonusercontent.com',
-        'domain:ozoncdn.com',
-        'domain:wildberries.com',
-        'domain:wbstatic.net',
-        'domain:anydesk.com',
-        'regexp:\\.ru$',
-        'regexp:\\.su$',
-        'regexp:\\.xn--p1ai$',
-    ],
-    'DirectIp': ['geoip:ru', 'geoip:private'],
-    'ProxySites': [
-        'domain:youtube.com',
-        'domain:youtu.be',
-        'domain:googlevideo.com',
-        'domain:ytimg.com',
-        'domain:youtubei.googleapis.com',
-        'domain:instagram.com',
-        'domain:cdninstagram.com',
-        'domain:facebook.com',
-        'domain:fbcdn.net',
-        'domain:whatsapp.com',
-        'domain:whatsapp.net',
-    ],
-    'ProxyIp': [],
-    'BlockSites': [],
-    'BlockIp': [],
-    'DomainStrategy': 'IPIfNonMatch',
-    'FakeDNS': 'false',
-    'RouteOrder': ['block', 'direct', 'proxy'],
-}
-
-
-def happ_routing_link():
-    payload = json.dumps(HAPP_ROUTING_PROFILE, separators=(',', ':'))
-    return 'happ://routing/onadd/' + base64.b64encode(payload.encode()).decode()
+from routing import HAPP_ROUTING_PROFILE, PROFILE_NAMES, build_happ_profile, happ_routing_link  # @@ROUTING@@
 
 
 def atomic(path, text, mode=0o600):
@@ -132,6 +77,8 @@ def validate_ip(ip):
 def validate(state):
     if state.get('schema') != 1:
         raise ValueError('Неизвестная версия резервной копии')
+    if state.get('routing_profile', 'baseline') not in PROFILE_NAMES:
+        raise ValueError('Неизвестный профиль маршрутизации')
     validate_ip(state['ip'])
     if not re.fullmatch(r'/[a-f0-9]{32}', state['path']):
         raise ValueError('Некорректный путь WebSocket')
@@ -189,7 +136,7 @@ def nginx(state, tls=True):
     access_log off;
     error_log /var/log/nginx/sa-vpn-error.log crit;
 '''
-    routing = happ_routing_link()
+    routing = happ_routing_link(build_happ_profile(state.get('routing_profile', 'baseline')))
     return http + f'''server {{
     listen 443 ssl;
     server_name _;
@@ -268,6 +215,32 @@ def apply(state):
         raise
 
 
+def apply_routing(state, profile_name):
+    """Update only the generated routing header; never restart/change Xray."""
+    profile = build_happ_profile(profile_name)
+    changed = copy.deepcopy(state)
+    changed['routing_profile'] = profile_name
+    validate(changed)
+    path = Path('/etc/nginx/conf.d/sa-vpn.conf')
+    previous = path.read_text()
+    pattern = r'(?m)^([ \t]*)add_header routing "[^"\r\n]*" always;[ \t]*$'
+    updated, count = re.subn(pattern, lambda match: match.group(1) +
+                            'add_header routing "' + happ_routing_link(profile) + '" always;', previous)
+    if count != 1:
+        raise ValueError('Ожидается ровно один routing-заголовок; конфигурация не изменена')
+    backup()
+    try:
+        atomic(path, updated, 0o644)
+        run('nginx', '-t')
+        run('systemctl', 'reload', 'nginx')
+        atomic(ROOT / 'state.json', json.dumps(changed, indent=2) + '\n')
+    except Exception:
+        atomic(path, previous, 0o644)
+        run('nginx', '-t')
+        run('systemctl', 'reload', 'nginx')
+        raise
+
+
 def links(state):
     for c in state['clients']:
         print(f"\n{c['name']}: https://{state['ip']}:2096/sub/{c['token']}")
@@ -313,7 +286,13 @@ def main():
     p = sub.add_parser('init'); p.add_argument('ip')
     p = sub.add_parser('provision'); p.add_argument('count', type=int)
     p = sub.add_parser('render'); p.add_argument('--http-only', action='store_true')
+    p = sub.add_parser('routing', help='Обновить только маршрутизацию подписок')
+    p.add_argument('--profile', choices=PROFILE_NAMES, default='baseline')
+    p.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
+    if args.command == 'routing' and args.dry_run:
+        print(happ_routing_link(build_happ_profile(args.profile)))
+        return
     if os.geteuid() != 0:
         parser.error('Запустите через sudo или от root')
     if args.command == 'init':
@@ -333,6 +312,10 @@ def main():
         apply(provision(state, args.count))
     elif args.command == 'render':
         render(state, tls=not args.http_only)
+    elif args.command == 'routing':
+        apply_routing(state, args.profile)
+        print('Маршрутизация обновлена; Xray, ключи и URL подписок не изменены.')
+        print('Обновите подписку в Happ, дождитесь загрузки геофайлов и переподключитесь.')
     elif args.command == 'doctor':
         run('systemctl', 'is-active', 'sa-vpn-xray', 'nginx', 'sa-vpn-renew.timer')
         run('nginx', '-t')

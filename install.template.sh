@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# Generated self-contained installer. Sources: install.template.sh + manager.py.
+# Generated self-contained installer. Sources: install.template.sh + manager.py + routing.py.
 set -Eeuo pipefail
 umask 077
 export DEBIAN_FRONTEND=noninteractive

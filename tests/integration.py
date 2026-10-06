@@ -16,7 +16,9 @@ import tempfile
 import threading
 import time
 
-spec = importlib.util.spec_from_file_location('manager', Path(__file__).resolve().parents[1] / 'manager.py')
+repo_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(repo_root))
+spec = importlib.util.spec_from_file_location('manager', repo_root / 'manager.py')
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 xray = str(Path(sys.argv[1]).resolve())
 
@@ -98,6 +100,14 @@ with tempfile.TemporaryDirectory(prefix='sa-vpn-test-') as tmp:
                 time.sleep(0.2)
         body = call('curl', '-fsS', '--cacert', str(cert), f"https://127.0.0.1:9444/sub/{c['token']}")
         assert base64.b64decode(body).decode() == m.uri(state, c)
+        headers = call('curl', '-fsS', '--cacert', str(cert), '-D', '-', '-o', '/dev/null',
+                       f"https://127.0.0.1:9444/sub/{c['token']}").decode()
+        routing_header = next(line.split(':', 1)[1].strip() for line in headers.splitlines()
+                              if line.lower().startswith('routing:'))
+        decoded = json.loads(base64.b64decode(routing_header.removeprefix('happ://routing/onadd/')))
+        assert decoded == m.HAPP_ROUTING_PROFILE
+        assert decoded['RouteOrder'] == ['block', 'proxy', 'direct']
+        assert 'per-app-proxy-mode:' not in headers.lower()
         for path in ['/sub/', '/sub/' + '0' * 48, '/state.json']:
             code = call('curl', '-sS', '--cacert', str(cert), '-o', '/dev/null', '-w', '%{http_code}',
                         'https://127.0.0.1:9444' + path)
