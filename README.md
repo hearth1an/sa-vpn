@@ -21,4 +21,5 @@
 
 [Технические подробности, мониторинг и управление](docs/technical.md) ·
 [AnyDesk, маршрутизация и план тестов скорости/YouTube](docs/routing-and-performance.md) ·
+[Белые списки и контрольный профиль YouTube](docs/whitelist-and-youtube-experiments.md) ·
 [Лицензия MIT](LICENSE)

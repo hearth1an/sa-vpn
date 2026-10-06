@@ -84,6 +84,9 @@ per-app VPN требует MDM и управляемых приложений. �
 
 ## Белые списки
 
+Практический аудит текущего адреса и подготовленные опыты описаны в
+[белых списках и контрольном тесте YouTube](whitelist-and-youtube-experiments.md).
+
 Различайте direct-список клиента и разрешённые адреса мобильного оператора.
 Наше правило не заставляет оператора пропустить недоступный VPN-вход.
 
@@ -156,7 +159,7 @@ Default qdisc не доказывает фактическую дисципли�
 
 ## YouTube: эксперимент с выходом, не обещание DNS-блокировки
 
-BlancVPN публично заявлял просмотр без рекламы с российской локацией; Google
+BlancVPN в FAQ заявляет просмотр без рекламы с российской локацией; Google
 пишет о приостановке показа Google Ads пользователям в России. Регион выходного
 IP — обоснованная гипотеза. Их отдельный маршрут для YouTube независимо от
 выбранной локации остаётся **неподтверждённым предположением**.
@@ -169,6 +172,10 @@ DNS-фильтр не умеет надёжно отличать рекламн�
 регион, скорость и ошибки на нескольких сеансах. Учитывать ограничения российских
 выходов. Не обещать постоянное отсутствие рекламы: геолокация и правила Google
 могут меняться. Встроенные автором рекламные интеграции остаются частью видео.
+
+Подготовлен отдельный клиентский профиль `youtube-direct-test`: сравнение с
+местным выходом устройства. Импорт не активирует его автоматически. Проверка и
+возврат к baseline — в [инструкции эксперимента](whitelist-and-youtube-experiments.md).
 
 Дополнительного выходного узла сейчас нет: фиктивный outbound не добавлен, видео
 не ломаются из-за несуществующего маршрута. Решение требует отдельного выбора
@@ -208,6 +215,6 @@ Happ и не живые геобазы. CI отдельно проверяет �
 - [Meta: QUIC](https://engineering.fb.com/2020/10/21/networking-traffic/how-facebook-is-bringing-quic-to-billions/)
 - [Xray: WebSocket / рекомендация XHTTP](https://xtls.github.io/en/config/transports/websocket.html)
 - [Google BBR](https://github.com/google/bbr/blob/master/Documentation/bbr-quick-start.md)
-- [BlancVPN: заявление о YouTube](https://t.me/s/blancvpn/57)
-- [Google: приостановка Google Ads в РФ](https://support.google.com/google-ads/answer/9946293?hl=en)
+- [BlancVPN: FAQ о российской локации и YouTube](https://blancvpn.com/ru/help/how-to-set-up-vpn-on-smart-tv)
+- [Google: приостановка Google Ads в РФ](https://support.google.com/adspolicy/answer/6368711?hl=en)
 - [AdGuard: ограничения DNS-фильтрации](https://adguard-dns.io/kb/adguard-home/faq/)

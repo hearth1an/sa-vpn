@@ -112,8 +112,12 @@ import base64
 import copy
 import json
 
-PROFILE_NAMES = ('baseline', 'runetfreedom')
+PROFILE_NAMES = ('baseline', 'runetfreedom', 'youtube-direct-test')
 ANYDESK_ANDROID_PACKAGE = 'com.anydesk.anydeskandroid'
+YOUTUBE_DOMAINS = (
+    'youtube.com', 'youtu.be', 'googlevideo.com', 'ytimg.com',
+    'youtubei.googleapis.com',
+)
 
 HAPP_ROUTING_PROFILE = {
     'Name': 'SA VPN - RU direct',
@@ -173,6 +177,15 @@ def build_happ_profile(name='baseline'):
         # ru-blocked-all (700k+ entries) on memory-limited mobile clients.
         # ru-blocked is also not automatic: grouped proxy rules can override
         # explicit direct exceptions when a community list includes them.
+    elif name == 'youtube-direct-test':
+        # Control experiment: exit via the user's ISP, not an ad blocker.
+        # Remove explicit proxy rules first: proxy precedes direct in Happ.
+        profile['Name'] = 'SA VPN - YouTube direct test'
+        rules = ['domain:' + domain for domain in YOUTUBE_DOMAINS]
+        profile['ProxySites'] = [rule for rule in profile['ProxySites'] if rule not in rules]
+        profile['DirectSites'] += rules + [
+            'domain:youtube.googleapis.com', 'domain:youtube-nocookie.com', 'domain:yt.be',
+        ]
     return profile
 
 

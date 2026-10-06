@@ -101,6 +101,22 @@ class RoutingTests(unittest.TestCase):
                                           '--profile', 'runetfreedom', '--format', 'happ-link'], text=True)
         self.assertTrue(output.startswith('happ://routing/add/'))
 
+    def test_youtube_direct_control_keeps_other_services_and_baseline(self):
+        before = copy.deepcopy(routing.HAPP_ROUTING_PROFILE)
+        experiment = routing.build_happ_profile('youtube-direct-test')
+        self.assertNotEqual(experiment['Name'], before['Name'])
+        for domain in (*routing.YOUTUBE_DOMAINS, 'r1.googlevideo.com',
+                       'youtube.googleapis.com', 'youtube-nocookie.com', 'yt.be'):
+            self.assertEqual(reference_route(experiment, domain), 'direct')
+            self.assertEqual(reference_route(before, domain), 'proxy')
+        for domain in ('instagram.com', 'video.cdninstagram.com', 'whatsapp.net'):
+            self.assertEqual(reference_route(experiment, domain, ('geoip:ru',)), 'proxy')
+        for domain in ('elba.kontur.ru', 'relay.net.anydesk.com'):
+            self.assertEqual(reference_route(experiment, domain), 'direct')
+        self.assertEqual(experiment['BlockSites'], [])
+        self.assertEqual(experiment['GlobalProxy'], 'true')
+        self.assertEqual(routing.build_happ_profile(), before)
+
     def test_process_fragment_is_not_in_ordinary_happ_profile(self):
         rule = routing.anydesk_singbox_rule()
         self.assertEqual(rule['action'], 'route')
